@@ -1,0 +1,42 @@
+# config/exchanges.yaml
+
+binance:
+  name: "binance"
+  sandbox: true
+  apiKey: "GnMpL2WeljxhsTZIvhIBypKBeb7NvTeIJbeeKgWd74VKRC2bKf7fARWQfkTnlwNk"
+  secret: "zTjtH29yy51qpwFW4YUnbOgroAcPU0h0Rr0mqS179nxeeHhpkWdwvQpqT6MJ9bVW"
+  options:
+    defaultType: "future"
+
+bybit:
+  name: "bybit"
+  sandbox: true
+  apiKey: "FMu61fxsNofaCIdktB"
+  secret: "kIZeZ7FKisNp5WwUS8AV9oG8eExFZ5WFfked"
+
+kraken:
+  name: "kraken"
+  sandbox: true
+  apiKey: "YOUR_KRAKEN_TESTNET_KEY"
+  secret: "YOUR_KRAKEN_TESTNET_SECRET"
+
+alpaca:
+  name: "alpaca"
+  sandbox: true
+  apiKey: "YOUR_ALPACA_PAPER_KEY"
+  secret: "YOUR_ALPACA_PAPER_SECRET"
+  baseUrl: "https://paper-api.alpaca.markets"
+
+ibkr:
+  name: "ibkr"
+  sandbox: true
+  apiKey: "YOUR_IBKR_PAPER_KEY"
+  secret: "YOUR_IBKR_PAPER_SECRET"
+
+ibkr:
+  name: "ibkr"
+  sandbox: true
+  host: "127.0.0.1"
+  port: 4002        # must match the Socket port in API settings
+  clientId: 1
+  readonly: false   # set true if you enabled Read-Only in the Gateway settings
