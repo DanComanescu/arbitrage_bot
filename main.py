@@ -1,117 +1,101 @@
 """
 main.py
+--------
+Entry-point for the arbitrage bot.
 
-Entry point for the arbitrage bot:
-- Loads configuration and logger
-- Instantiates exchange clients dynamically
-- Loads markets for Binance & Bybit
-- Starts the spread monitor on Binance and Bybit only
+• Configures logging (DEBUG heart-beats)  
+• Loads exchange configs & instantiates Binance + Bybit clients  
+• Pre-loads CCXT markets so order-calls won’t block  
+• Starts the asynchronous spread-monitor
 """
 
 import asyncio
+import logging
 
-from config.settings import LOGGER_NAME
-from config.loader import load_exchanges_config
-from utils.logger import get_logger
+# ─── Global logging ──────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("ccxt").setLevel(logging.WARNING)
 
-# Exchange factories
+from config.settings  import LOGGER_NAME
+from config.loader    import load_exchanges_config
+from utils.logger     import get_logger
+
 from exchanges.binance import create_binance_client
-from exchanges.bybit import create_bybit_client
-from exchanges.kraken import create_kraken_client
-from exchanges.alpaca import create_alpaca_client
-from exchanges.ibkr import create_ibkr_client
+from exchanges.bybit   import create_bybit_client
 
-# Spread monitor
 from strategies.spread_strategy import monitor_spread
-
-# Order execution
-from execution.trader import open_position, close_position
+from execution.trader           import open_position, close_position
 
 EXCHANGE_FACTORIES = {
-    'binance': create_binance_client,
-    'bybit':   create_bybit_client,
-    'kraken':  create_kraken_client,
-    'alpaca':  create_alpaca_client,
-    'ibkr':    create_ibkr_client,
+    "binance": create_binance_client,
+    "bybit":   create_bybit_client,
+    # add "coinbase": create_coinbase_client later if you like
 }
 
-TRADE_AMOUNT = 0.001  # BTC per arbitrage leg, adjust as needed
+TRADE_AMOUNT = 0.001  # BTC per leg
 
+# ─── Callback hooks ──────────────────────────────────────────────────────────
 def on_open(low_ex: str, high_ex: str, spread: float):
-    """
-    Called when the spread exceeds the open threshold.
-    """
-    logger.info(f"OPEN signal ➜ buy on {low_ex}, sell on {high_ex}, spread={spread:.2f}%")
-    open_position(clients, low_ex, high_ex, 'BTC/USDT', TRADE_AMOUNT)
+    logger.info(f"OPEN ▸ buy on {low_ex}, sell on {high_ex}  (spread={spread:.2f} %)")
+    open_position(clients, low_ex, high_ex, "BTC/USDT", TRADE_AMOUNT)
 
 def on_close(low_ex: str, high_ex: str, spread: float):
-    """
-    Called when the spread falls back within the close threshold.
-    """
-    logger.info(f"CLOSE signal ➜ closing legs on {low_ex}/{high_ex}, spread={spread:.2f}%")
-    close_position(clients, low_ex, high_ex, 'BTC/USDT', TRADE_AMOUNT)
+    logger.info(f"CLOSE ▸ exiting {low_ex}/{high_ex}  (spread {spread:.2f} %)")
+    close_position(clients, low_ex, high_ex, "BTC/USDT", TRADE_AMOUNT)
 
-def main():
-    # Initialize logging
+# ─── Main routine ────────────────────────────────────────────────────────────
+def main() -> None:
     global logger, clients
     logger = get_logger(LOGGER_NAME)
     logger.info("Starting arbitrage bot")
 
-    # Load exchange configurations
+    # 1) read config ----------------------------------------------------------
     try:
-        exchanges_cfg = load_exchanges_config()
-        logger.info(f"Loaded exchange configs: {list(exchanges_cfg.keys())}")
-    except Exception as e:
-        logger.error(f"Config load failed: {e}")
+        cfg = load_exchanges_config()
+        logger.info(f"Configs found: {list(cfg)}")
+    except Exception as exc:
+        logger.error(f"Failed to load configs: {exc}")
         return
 
-    # Instantiate each exchange client
+    # 2) spin-up exchange clients --------------------------------------------
     clients = {}
-    for key, cfg in exchanges_cfg.items():
-        factory = EXCHANGE_FACTORIES.get(key)
-        if not factory:
-            logger.error(f"No factory function for exchange '{key}'")
+    for name in ("binance", "bybit"):
+        if name not in cfg:
+            logger.warning(f"No config for {name}, skip")
             continue
         try:
-            clients[key] = factory(cfg)
-            logger.info(f"Initialized client for {key}")
-        except Exception as e:
-            logger.error(f"Failed to initialize client for {key}: {e}")
+            clients[name] = EXCHANGE_FACTORIES[name](cfg[name])
+            logger.info(f"Client ready → {name}")
+        except Exception as exc:
+            logger.error(f"{name} init failed: {exc}")
 
-    if not clients:
-        logger.error("No exchange clients initialized—exiting.")
+    if len(clients) < 2:
+        logger.error("Need at least two exchanges, aborting.")
         return
 
-    # Restrict to Binance and Bybit for spread monitoring
-    spot_clients = {
-        name: clients[name]
-        for name in ('binance', 'bybit')
-        if name in clients
-    }
-
-    if len(spot_clients) < 2:
-        logger.error("Need both Binance and Bybit clients for spot arbitrage—exiting.")
-        return
-
-    # **NEW**: Pre-load markets on both clients so CCXT can place orders later
-    for name, client in spot_clients.items():
+    # 3) pre-load markets so CCXT orders work ---------------------------------
+    for n, c in clients.items():
         try:
-            client.load_markets()
-            logger.info(f"Loaded markets for {name}")
-        except Exception as e:
-            logger.warning(f"Could not load markets for {name}: {e}")
+            c.load_markets()
+            logger.info(f"Markets loaded for {n}")
+        except Exception as exc:
+            logger.warning(f"Couldn’t load markets for {n}: {exc}")
 
-    # Start the asynchronous spread monitor on just Binance & Bybit
+    # 4) fire-up spread monitor ----------------------------------------------
     loop = asyncio.get_event_loop()
     loop.run_until_complete(
         monitor_spread(
-            clients         = spot_clients,
-            symbol          = 'BTC/USDT',
-            threshold_open  = 0.2,   # 0.2% to open
-            threshold_close = 0.1,   # 0.1% to close
+            clients         = clients,
+            symbol          = "BTC/USDT",
+            threshold_open  = 0.2,     # open ≥ 0 .2 %
+            threshold_close = 0.1,     # close ≤ 0 .1 %
             on_open         = on_open,
             on_close        = on_close,
-            poll_interval   = 1.0    # seconds between checks
+            poll_interval   = 1.0,     # seconds
         )
     )
 
